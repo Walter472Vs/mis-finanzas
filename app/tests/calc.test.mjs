@@ -71,6 +71,44 @@ test('plan del día de pago: proporcional al ingreso, con impuesto y conversión
   assert.ok(Math.abs(total - 4210) < 0.05, `el ahorro se reparte completo: ${total}`);
 });
 
+test('registrar y repartir: escala el plan al monto real y convierte a la moneda de cada bolsa', () => {
+  const p = perfilEjemplo();
+  const free = p.ingresos[1]; // US$ 2,000, 8% de impuesto
+  const lineas = C.movimientosDePago(p, free, 1000, '2026-11-15'); // llegó la mitad
+  const ing = lineas.find((l) => l.tipo === 'ingreso');
+  assert.deepEqual([ing.categoria, ing.monto, ing.moneda, ing.fecha], ['freelance', 1000, 'USD', '2026-11-15']);
+  assert.equal(lineas.find((l) => l.tipo === 'gasto').monto, 280); // 8% de 3,500 soles
+  const etf = lineas.find((l) => l.categoria === 'etf');
+  assert.equal(etf.moneda, 'USD');
+  assert.equal(etf.monto, C.redondear(C.planDiaPago(p, free).montos.destinos.find((d) => d.bolsa === 'etf').monto / 2 / 3.5));
+  for (const l of lineas) assert.doesNotThrow(() => C.validarMovimiento({ ...l, id: 'x' }, p));
+});
+
+test('aviso bancario: monto, moneda, fecha e ingreso sugerido', () => {
+  const p = perfilEjemplo();
+  const a = C.parsearAviso('BCP: Recibiste un abono de S/ 4,812.30 en tu cuenta Sueldo **1234 el 28/10/2026. Saldo disponible S/ 9,500.00', p);
+  assert.deepEqual([a.monto, a.moneda, a.fecha, a.ingreso?.id], [4812.3, 'PEN', '2026-10-28', 'sueldo']);
+  const b = C.parsearAviso('Interbank - Constancia: Transferencia recibida por US$ 1,950.00 a tu Cuenta Simple Dólares', p);
+  assert.deepEqual([b.monto, b.moneda, b.ingreso?.id], [1950, 'USD', 'free']);
+  const c = C.parsearAviso('Se depositó 2.000,00 USD el 2026-11-15', p);
+  assert.deepEqual([c.monto, c.moneda, c.fecha], [2000, 'USD', '2026-11-15']);
+  const d = C.parsearAviso('Abono de S/. 50.00', p);
+  assert.equal(d.ingreso, null); // muy distinto a cualquier ingreso del plan
+  assert.equal(C.parsearAviso('Hola, sin montos', p), null);
+});
+
+test('ajuste de saldo real: intereses no cuentan como aporte', () => {
+  const e = estadoEjemplo();
+  e.movimientos = [{ id: '1', fecha: '2026-10-25', tipo: 'aporte', categoria: 'emergencia', monto: 10000, moneda: 'PEN' }];
+  const m = C.movimientoAjuste(10000, 10080, 'emergencia', 'PEN', '2026-10-31');
+  assert.deepEqual([m.tipo, m.monto, m.rendimiento], ['aporte', 80, true]);
+  e.movimientos.push(m);
+  const s = C.saldosPorBolsa(e).emergencia;
+  assert.deepEqual([s.valor, s.aportado, s.rendimiento], [10080, 10000, 80]);
+  assert.equal(C.movimientoAjuste(100, 100, 'emergencia', 'PEN', '2026-10-31'), null);
+  assert.equal(C.movimientoAjuste(100, 90, 'emergencia', 'PEN', '2026-10-31', false).tipo, 'retiro');
+});
+
 test('interés de plazo fijo con TEA y base 360', () => {
   assert.equal(C.redondear(C.interesPF(10000, 6, 360)), 600);
   assert.equal(C.redondear(C.interesPF(10000, 6, 180)), 295.63);

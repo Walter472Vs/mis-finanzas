@@ -166,6 +166,114 @@ export function planDiaPago(perfil, ingreso) {
   };
 }
 
+// Movimientos que genera "Registrar y repartir" para un pago real.
+// Escala el plan del día según el monto real recibido (si llegó más o menos de lo previsto).
+export function movimientosDePago(perfil, ingreso, montoReal, fecha, tc = perfil.tc) {
+  const plan = planDiaPago(perfil, ingreso);
+  const previsto = Number(ingreso.monto) || 0;
+  const factor = previsto > 0 ? montoReal / previsto : 0;
+  const lineas = [{ tipo: 'ingreso', categoria: ingreso.categoria, monto: redondear(montoReal), moneda: ingreso.moneda, nota: ingreso.nombre }];
+  if (plan.montos.impuesto > 0 && categoria(perfil, 'gasto', 'impuestos')) {
+    lineas.push({ tipo: 'gasto', categoria: 'impuestos', monto: redondear(plan.montos.impuesto * factor), moneda: perfil.moneda, nota: `Impuesto de ${ingreso.nombre} (${ingreso.impuestoPct}%)` });
+  }
+  for (const d of plan.montos.destinos) {
+    const b = bolsa(perfil, d.bolsa);
+    const enMoneda = redondear(desdePrincipal(d.monto * factor, b.moneda || perfil.moneda, { ...perfil, tc }));
+    if (enMoneda > 0) lineas.push({ tipo: 'aporte', categoria: b.id, monto: enMoneda, moneda: b.moneda || perfil.moneda, nota: `Reparto de ${ingreso.nombre}` });
+  }
+  return lineas.map((l) => ({ ...l, fecha, tc }));
+}
+
+// ---------- Avisos bancarios (texto copiado de una notificación, SMS o correo) ----------
+
+function aNumero(s) {
+  // Acepta 1,234.50 · 1.234,50 · 1234.5 · 4500
+  const limpio = s.replace(/\s/g, '');
+  const ultimaComa = limpio.lastIndexOf(',');
+  const ultimoPunto = limpio.lastIndexOf('.');
+  let n;
+  if (ultimaComa > ultimoPunto) n = /,\d{1,2}$/.test(limpio) ? limpio.replace(/\./g, '').replace(',', '.') : limpio.replace(/,/g, '');
+  else n = limpio.replace(/,/g, '');
+  return Number(n);
+}
+
+const MONEDA_TEXTO = [
+  [/US\s?\$|USD|U\$S|d[oó]lares?/i, 'USD'],
+  [/S\/\.?|PEN|soles?/i, 'PEN'],
+  [/€|EUR|euros?/i, 'EUR'],
+  [/MXN|COP|CLP|ARS/i, null],
+];
+
+// Extrae monto, moneda y fecha de un aviso bancario y sugiere a qué ingreso corresponde.
+export function parsearAviso(texto, perfil) {
+  if (!texto || typeof texto !== 'string') return null;
+  const t = texto.replace(/ /g, ' ');
+  const patron = /(US\s?\$|USD|U\$S|S\/\.?|PEN|EUR|€|\$)\s*([0-9][0-9.,]*[0-9]|[0-9])|([0-9][0-9.,]*[0-9])\s*(USD|PEN|soles|d[oó]lares|EUR)/gi;
+  const candidatos = [];
+  for (const m of t.matchAll(patron)) {
+    const simbolo = m[1] || m[4];
+    const monto = aNumero(m[2] || m[3]);
+    if (!(monto > 0)) continue;
+    let moneda = null;
+    for (const [re, cod] of MONEDA_TEXTO) {
+      if (re.test(simbolo)) {
+        moneda = cod;
+        break;
+      }
+    }
+    if (!moneda && simbolo === '$') moneda = perfil.monedaSecundaria === 'USD' || perfil.moneda === 'USD' ? 'USD' : null;
+    if (moneda) candidatos.push({ monto, moneda, pos: m.index });
+  }
+  if (!candidatos.length) return null;
+  // Preferimos el monto que aparece cerca de palabras de abono/depósito; si no, el primero.
+  const claves = /abono|dep[oó]sit|recib|transferencia|ingreso|haber|pago de planilla|remuneraci/i;
+  const idxClave = t.search(claves);
+  const elegido = idxClave >= 0 ? candidatos.reduce((a, b) => (Math.abs(b.pos - idxClave) < Math.abs(a.pos - idxClave) ? b : a)) : candidatos[0];
+
+  let fecha = null;
+  const f1 = t.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  const f2 = t.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (f2) fecha = `${f2[1]}-${f2[2]}-${f2[3]}`;
+  else if (f1) {
+    const y = f1[3].length === 2 ? `20${f1[3]}` : f1[3];
+    const d = Number(f1[1]);
+    const mo = Number(f1[2]);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) fecha = `${y}-${pad(mo)}-${pad(d)}`;
+  }
+
+  // Ingreso sugerido: misma moneda y monto más parecido (tolerancia de 25%).
+  let ingreso = null;
+  let mejor = Infinity;
+  for (const i of perfil.ingresos) {
+    if (i.moneda !== elegido.moneda || !(i.monto > 0)) continue;
+    const dif = Math.abs(i.monto - elegido.monto) / i.monto;
+    if (dif < mejor && dif <= 0.25) {
+      mejor = dif;
+      ingreso = i;
+    }
+  }
+  return { monto: elegido.monto, moneda: elegido.moneda, fecha, ingreso };
+}
+
+// ---------- Ajuste de saldo real ----------
+
+// Movimiento que lleva el saldo de una bolsa al saldo real informado.
+// Si es interés o rendimiento, no cuenta como aporte (no infla lo "aportado").
+export function movimientoAjuste(saldoActual, saldoReal, bolsaId, moneda, fecha, esRendimiento = true) {
+  const dif = redondear(saldoReal - saldoActual);
+  if (dif === 0) return null;
+  return {
+    id: nuevoId(),
+    fecha,
+    tipo: dif > 0 ? 'aporte' : 'retiro',
+    categoria: bolsaId,
+    monto: Math.abs(dif),
+    moneda,
+    nota: esRendimiento ? 'Ajuste de saldo (intereses)' : 'Ajuste de saldo',
+    ...(esRendimiento ? { rendimiento: true } : {}),
+  };
+}
+
 // ---------- Plazos fijos ----------
 
 // Interés con TEA (convención de año de 360 días).

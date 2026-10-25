@@ -26,6 +26,7 @@ const base = () => ({
   tc: 1,
   tcFecha: '',
   tcFuente: 'Manual',
+  tcAuto: true,
   tema: 'oscuro',
   acento: '#22d3ee',
   ocultarMontos: false,

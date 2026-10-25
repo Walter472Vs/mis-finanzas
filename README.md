@@ -41,6 +41,11 @@
   - Al "cobrarlo", el interés se suma a la bolsa como rendimiento.
 - **Días de pago**: te dice cuánto apartar para impuestos, gastos y cada bolsa. El reparto es proporcional a lo que aporta cada ingreso, y te convierte a dólares lo que va a bolsas en dólares.
 - **Calendario (.ics)** con todos tus recordatorios, para que tu teléfono te avise aunque la app esté cerrada.
+- **Automatizaciones:**
+  - **Pegar aviso del banco**: pegas el texto de la notificación, el SMS o el correo de abono, y la app detecta el monto, la moneda, la fecha y a qué ingreso corresponde.
+  - **Registrar y repartir**: con un toque se crean el ingreso, el impuesto y los aportes a cada bolsa según tu plan. Si llegó más o menos de lo previsto, el reparto se ajusta solo.
+  - **Tipo de cambio automático** una vez al día (se puede desactivar).
+  - **Ajustar saldo**: tocas una bolsa, escribes el saldo real de tu cuenta y la diferencia se registra como interés.
 - **Respaldo**:
   - Respaldo completo (JSON).
   - Movimientos (CSV).
@@ -79,7 +84,7 @@ app/
   js/charts.js           gráficos
   js/icons.js            íconos Lucide
   js/db.js               IndexedDB
-  tests/calc.test.mjs    15 pruebas
+  tests/calc.test.mjs    18 pruebas
 ```
 
 ### Pruebas
@@ -157,6 +162,21 @@ Notas para iPhone:
 - Los datos de la app instalada están separados de los de Safari. Úsala siempre desde el ícono.
 - iOS puede borrar los datos de webs que no usas en mucho tiempo. Una app agregada a la pantalla de inicio está protegida, pero igual **exporta un respaldo cada mes**. Ya viene un recordatorio configurado para eso.
 - No hace falta App Store ni cuenta de desarrollador.
+
+### Automatizar los avisos del banco con Atajos (iPhone)
+Una app web no puede leer tus notificaciones ni tus correos, y la app no se conecta a tu banco a propósito. Lo que sí puedes hacer es que un **Atajo de iOS** copie el aviso por ti:
+
+1. En la app de tu banco (BCP, Interbank…), activa los **avisos de abono por SMS o correo**. Las notificaciones *push* de la app del banco no las puede leer un Atajo.
+2. Abre **Atajos → Automatización → Nueva automatización**:
+   - **Si te llegan por SMS**: elige **Mensaje**, con **Remitente** = el número o nombre del banco y **El mensaje contiene** = "abono".
+   - **Si te llegan por correo**: elige **Correo**, con **Remitente** = el correo de notificaciones del banco y **El asunto contiene** = "abono" o "constancia".
+   - Elige **Ejecutar inmediatamente**.
+3. Agrega estas dos acciones:
+   - **Copiar al portapapeles** → *Entrada del atajo* (el contenido del mensaje).
+   - **Mostrar notificación** → "Abre Mis Finanzas y toca Pegar aviso".
+4. Cuando llegue tu sueldo, abre la app y toca **Pegar aviso → Pegar del portapapeles → Registrar y repartir**.
+
+Si tu banco usa un formato que la app no reconoce, copia un aviso de ejemplo (sin números de cuenta) y se ajusta el lector.
 
 ### Android (Chrome)
 Abre la URL en Chrome y toca **⋮ → Instalar app**. Chrome genera e instala un **WebAPK**, que es un APK real firmado por Google.

@@ -140,13 +140,14 @@ function cabeceraPanel(titulo) {
   return `<div class="panel-cabecera"><h2>${esc(titulo)}</h2><button class="boton-icono" data-accion="cerrar-panel" aria-label="Cerrar">${I('x', { tam: 18 })}</button></div>`;
 }
 
-// Panel de nuevo movimiento / edición.
-function panelMovimiento(mov = null) {
+// Panel de nuevo movimiento / edición. `pre` precarga un movimiento nuevo (p. ej. desde un aviso bancario).
+function panelMovimiento(mov = null, pre = null) {
   const p = P();
+  const base = mov || pre || {};
   const s = {
-    tipo: mov?.tipo || 'gasto',
-    categoria: mov?.categoria || null,
-    moneda: mov?.moneda || p.moneda,
+    tipo: base.tipo || 'gasto',
+    categoria: base.categoria || null,
+    moneda: base.moneda || p.moneda,
   };
   const pintar = (panel) => {
     const cats = C.categoriasDe(p, s.tipo);
@@ -164,15 +165,15 @@ function panelMovimiento(mov = null) {
   const atajos = p.ingresos.filter((i) => i.monto > 0);
   abrirPanel(
     `${cabeceraPanel(mov ? 'Editar movimiento' : 'Nuevo movimiento')}
-    ${!mov && atajos.length ? `<div class="fila" style="overflow-x:auto;gap:8px;margin-bottom:12px">${atajos.map((i) => `<button class="chip" style="min-height:34px" data-accion="pm-atajo" data-id="${esc(i.id)}">${I('zap', { tam: 14 })} ${esc(i.nombre)}</button>`).join('')}</div>` : ''}
+    ${!mov ? `<div class="fila" style="overflow-x:auto;gap:8px;margin-bottom:12px"><button class="chip acento" style="min-height:34px" data-accion="pegar-aviso">${I('clipboard-paste', { tam: 14 })} Pegar aviso del banco</button>${atajos.map((i) => `<button class="chip" style="min-height:34px" data-accion="pm-atajo" data-id="${esc(i.id)}">${I('zap', { tam: 14 })} ${esc(i.nombre)}</button>`).join('')}</div>` : ''}
     <div class="segmentado" id="pm-tipos"></div>
-    <div class="monto-grande"><input id="pm-monto" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${mov ? mov.monto : ''}" aria-label="Monto"><button type="button" id="pm-moneda" data-accion="pm-moneda" ${p.monedaSecundaria ? '' : 'disabled'}></button></div>
+    <div class="monto-grande"><input id="pm-monto" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${base.monto ?? ''}" aria-label="Monto"><button type="button" id="pm-moneda" data-accion="pm-moneda" ${p.monedaSecundaria ? '' : 'disabled'}></button></div>
     <div class="rejilla" id="pm-cats" style="margin-top:8px"></div>
     <div class="grid2">
-      <div><label class="campo" for="pm-fecha">Fecha</label><input id="pm-fecha" type="date" value="${mov?.fecha || C.hoyISO()}"></div>
-      <div id="pm-tc-fila"><label class="campo" for="pm-tc">Tipo de cambio</label><input id="pm-tc" type="number" inputmode="decimal" step="0.001" value="${mov?.tc || p.tc}"></div>
+      <div><label class="campo" for="pm-fecha">Fecha</label><input id="pm-fecha" type="date" value="${base.fecha || C.hoyISO()}"></div>
+      <div id="pm-tc-fila"><label class="campo" for="pm-tc">Tipo de cambio</label><input id="pm-tc" type="number" inputmode="decimal" step="0.001" value="${base.tc || p.tc}"></div>
     </div>
-    <label class="campo" for="pm-nota">Nota</label><input id="pm-nota" maxlength="200" value="${esc(mov?.nota || '')}" placeholder="Opcional">
+    <label class="campo" for="pm-nota">Nota</label><input id="pm-nota" maxlength="200" value="${esc(base.nota || '')}" placeholder="Opcional">
     <div class="botones"><button class="primario ancho" data-accion="pm-guardar">${I('check')} Guardar</button>${mov ? `<button class="peligro ancho" data-accion="pm-borrar">${I('trash-2')} Borrar</button>` : ''}</div>`,
     {
       'pm-tipo': (el) => {
@@ -302,14 +303,15 @@ function panelCobrar(pf) {
   );
 }
 
-function panelValor() {
+function panelValor(bolsaSel = null) {
   const p = P();
+  if (typeof bolsaSel !== 'string') bolsaSel = null;
   const actual = (id) => estado.valoraciones[id];
   abrirPanel(
     `${cabeceraPanel('Valor de mercado')}
     <p class="suave">Escribe lo que ves hoy en tu bróker o exchange. Si lo quitas, se usa lo aportado (+ intereses de plazos fijos).</p>
     <div class="grid2">
-      <div><label class="campo" for="pv-bolsa">Bolsa</label><select id="pv-bolsa">${opciones(p.bolsas.map((b) => [b.id, b.nombre]), p.bolsas.find((b) => b.moneda !== p.moneda)?.id)}</select></div>
+      <div><label class="campo" for="pv-bolsa">Bolsa</label><select id="pv-bolsa">${opciones(p.bolsas.map((b) => [b.id, b.nombre]), bolsaSel || p.bolsas.find((b) => b.moneda !== p.moneda)?.id)}</select></div>
       <div><label class="campo" for="pv-moneda">Moneda</label><select id="pv-moneda">${opciones(monedasPerfil().map((m) => [m, m]), p.monedaSecundaria || p.moneda)}</select></div>
     </div>
     <label class="campo" for="pv-monto">Valor actual</label><input id="pv-monto" type="number" inputmode="decimal" step="0.01" min="0">
@@ -352,6 +354,137 @@ function panelIconos(lista, idx, catalogo) {
         cerrarPanel();
         render();
       },
+    },
+  );
+}
+
+// Pegar el texto de una notificación, SMS o correo del banco y convertirlo en un movimiento.
+function panelPegarAviso() {
+  const leer = (texto) => {
+    const r = C.parsearAviso(texto, P());
+    if (!r) return avisar('No encontré un monto en ese texto');
+    const fecha = r.fecha || C.hoyISO();
+    if (r.ingreso) panelRepartir(r.ingreso.id, r.monto, fecha);
+    else panelMovimiento(null, { tipo: 'ingreso', categoria: P().categoriasIngreso[0]?.id, monto: r.monto, moneda: monedasPerfil().includes(r.moneda) ? r.moneda : P().moneda, fecha, nota: 'Aviso bancario' });
+  };
+  abrirPanel(
+    `${cabeceraPanel('Pegar aviso del banco')}
+    <p class="suave">Copia la notificación, el SMS o el correo de abono de tu banco (BCP, Interbank, etc.) y pégalo aquí. Detecto el monto, la moneda, la fecha y a cuál de tus ingresos corresponde.</p>
+    <textarea id="pa-texto" rows="5" placeholder="Ej. Recibiste un abono de S/ 4,812.30 en tu cuenta…"></textarea>
+    <div class="botones">
+      <button class="primario ancho" data-accion="pa-portapapeles">${I('clipboard-paste')} Pegar del portapapeles</button>
+      <button class="ancho" data-accion="pa-leer">${I('check')} Leer texto</button>
+    </div>
+    <p class="tenue">El texto no sale de tu teléfono. Tip: en iPhone puedes crear un Atajo que copie el aviso por ti (ver README).</p>`,
+    {
+      'pa-portapapeles': async () => {
+        try {
+          const t = await navigator.clipboard.readText();
+          $('#pa-texto').value = t;
+          leer(t);
+        } catch {
+          avisar('Tu navegador no dejó leer el portapapeles: mantén presionado el cuadro y elige Pegar');
+          $('#pa-texto').focus();
+        }
+      },
+      'pa-leer': () => leer($('#pa-texto').value),
+    },
+  );
+}
+
+// Registrar un pago y repartirlo según el plan, con un toque.
+function panelRepartir(ingresoId, montoReal = null, fecha = C.hoyISO()) {
+  const p = P();
+  if (!p.ingresos.length) return avisar('Primero agrega tus ingresos en Ajustes');
+  let ing = p.ingresos.find((i) => i.id === ingresoId) || p.ingresos[0];
+  let lineas = [];
+  const etiqueta = (l) => {
+    if (l.tipo === 'ingreso') return { texto: `Ingreso · ${ing.nombre}`, icono: 'arrow-down-left', color: '#34d399' };
+    if (l.tipo === 'gasto') return { texto: 'Impuesto (gasto)', icono: 'receipt', color: '#fb7185' };
+    const b = C.bolsa(p, l.categoria);
+    return { texto: b.nombre, icono: b.icono, color: b.color };
+  };
+  const pintar = (panel) => {
+    const monto = Number($('#pr-monto', panel).value) || 0;
+    lineas = C.movimientosDePago(p, ing, monto, $('#pr-fecha', panel).value || C.hoyISO());
+    $('#pr-moneda', panel).textContent = ing.moneda;
+    $('#pr-lineas', panel).innerHTML = lineas
+      .map((l, k) => {
+        const e = etiqueta(l);
+        return `<li>
+          <input type="checkbox" data-pr-check="${k}" checked ${l.tipo === 'ingreso' ? 'disabled' : ''} aria-label="Incluir">
+          ${burbuja(e.icono, e.color, true)}
+          <span class="crecer titulo">${esc(e.texto)}</span>
+          <input type="number" inputmode="decimal" step="0.01" data-pr-monto="${k}" value="${l.monto}" style="max-width:120px;min-height:40px;padding:8px 10px" ${l.tipo === 'ingreso' ? 'disabled' : ''}>
+          <span class="tenue" style="width:34px">${esc(l.moneda)}</span>
+        </li>`;
+      })
+      .join('');
+  };
+  abrirPanel(
+    `${cabeceraPanel('Registrar y repartir')}
+    ${p.ingresos.length > 1 ? `<div class="segmentado" style="margin-bottom:10px">${p.ingresos.map((i) => `<button data-accion="pr-ingreso" data-id="${esc(i.id)}" aria-pressed="${i.id === ing.id}">${esc(i.nombre)}</button>`).join('')}</div>` : ''}
+    <div class="monto-grande"><input id="pr-monto" type="number" inputmode="decimal" step="0.01" min="0" value="${montoReal ?? ing.monto}" aria-label="Monto recibido"><span class="chip" id="pr-moneda"></span></div>
+    <p class="tenue" style="text-align:center;margin:0">Monto que llegó a tu cuenta. El reparto se ajusta solo.</p>
+    <label class="campo" for="pr-fecha">Fecha</label><input id="pr-fecha" type="date" value="${fecha}">
+    <ul class="lista" id="pr-lineas" style="margin-top:8px"></ul>
+    <p class="tenue">Se crean como movimientos y se marca el recordatorio de ese día como hecho. Recuerda hacer las transferencias reales en tu banco.</p>
+    <div class="botones"><button class="primario ancho" data-accion="pr-ok">${I('split')} Registrar y repartir</button></div>`,
+    {
+      'pr-ingreso': (el) => {
+        ing = p.ingresos.find((i) => i.id === el.dataset.id);
+        $('#pr-monto').value = ing.monto;
+        $$('[data-accion="pr-ingreso"]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.id === ing.id));
+        pintar($('.panel'));
+      },
+      'pr-ok': async () => {
+        const fechaReal = $('#pr-fecha').value || C.hoyISO();
+        const nuevos = [];
+        lineas.forEach((l, k) => {
+          if (l.tipo !== 'ingreso' && !$(`[data-pr-check="${k}"]`).checked) return;
+          const monto = l.tipo === 'ingreso' ? l.monto : Number($(`[data-pr-monto="${k}"]`).value);
+          if (monto > 0) nuevos.push(C.validarMovimiento({ ...l, id: C.nuevoId(), fecha: fechaReal, monto }, p));
+        });
+        estado.movimientos.push(...nuevos);
+        estado.hechos[`${fechaReal}:pago-${ing.id}`] = true;
+        await guardar();
+        cerrarPanel();
+        avisar(`${nuevos.length} movimientos registrados`);
+        render();
+      },
+    },
+    (panel) => {
+      pintar(panel);
+      $('#pr-monto', panel).addEventListener('input', () => pintar(panel));
+      $('#pr-fecha', panel).addEventListener('change', () => pintar(panel));
+    },
+  );
+}
+
+// Llevar el saldo de una bolsa al saldo real de tu cuenta (intereses, correcciones).
+function panelAjustar(bolsaId) {
+  const p = P();
+  const b = C.bolsa(p, bolsaId);
+  if (b.moneda && b.moneda !== p.moneda) return panelValor(bolsaId);
+  const actual = C.saldosPorBolsa(estado)[bolsaId].valor;
+  abrirPanel(
+    `${cabeceraPanel(b.nombre)}
+    <div class="fila" style="margin-bottom:6px">${burbuja(b.icono, b.color)}<div class="columna"><span class="tenue">Saldo en la app</span><b class="mediano">${M(actual)}</b></div></div>
+    <label class="campo" for="aj-real">Saldo real hoy en tu cuenta (${esc(p.moneda)})</label>
+    <input id="aj-real" type="number" inputmode="decimal" step="0.01" min="0" value="${actual}">
+    <label class="fila" style="margin-top:12px"><input type="checkbox" id="aj-rend" checked> <span class="suave">La diferencia son intereses o rendimiento (no un aporte tuyo)</span></label>
+    <div class="botones"><button class="primario ancho" data-accion="aj-ok">${I('scale')} Ajustar saldo</button><button class="ancho" data-accion="aj-mov">${I('plus')} Registrar aporte o retiro</button></div>`,
+    {
+      'aj-ok': async () => {
+        const m = C.movimientoAjuste(actual, Number($('#aj-real').value), bolsaId, p.moneda, C.hoyISO(), $('#aj-rend').checked);
+        if (!m) return avisar('El saldo ya coincide');
+        estado.movimientos.push({ ...m, tc: p.tc });
+        await guardar();
+        cerrarPanel();
+        avisar('Saldo ajustado');
+        render();
+      },
+      'aj-mov': () => panelMovimiento(null, { tipo: 'aporte', categoria: bolsaId }),
     },
   );
 }
@@ -462,6 +595,8 @@ function vistaInicio() {
   const pctGasto = p.presupuestoGastos ? (mes.gastos / p.presupuestoGastos) * 100 : 0;
   const prox = C.recordatorios(estado, C.hoyISO(), 14).filter((r) => !estado.hechos[r.clave]).slice(0, 4);
   const topGastos = Object.entries(mes.gastosPorCategoria).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  // Pagos de los últimos 3 días (o de hoy) que aún no registraste.
+  const pagosPendientes = C.recordatorios(estado, C.sumarDias(C.hoyISO(), -3), 3).filter((r) => r.tipo === 'pago' && !estado.hechos[r.clave]);
 
   const tarjetaMeta = meta
     ? `<section class="tarjeta entrar">
@@ -491,13 +626,28 @@ function vistaInicio() {
     </div>
   </section>
 
+  <div class="grid3" style="margin-bottom:14px">
+    <button class="accion-rapida" data-accion="pegar-aviso">${I('clipboard-paste')}<span>Pegar aviso</span></button>
+    <button class="accion-rapida" data-accion="repartir">${I('split')}<span>Repartir pago</span></button>
+    <button class="accion-rapida" data-accion="nuevo-pf">${I('landmark')}<span>Plazo fijo</span></button>
+  </div>
+
+  ${pagosPendientes.map((r) => {
+    const id = r.clave.split(':pago-')[1];
+    const ing = p.ingresos.find((i) => i.id === id);
+    return ing ? `<section class="tarjeta entrar" style="border-color:color-mix(in srgb, var(--ok) 45%, transparent)">
+      <div class="fila">${burbuja('banknote', '#34d399')}<div class="crecer columna"><b>${r.enDias === 0 ? 'Hoy' : esc(fechaCorta(r.fecha))} cobras ${esc(ing.nombre)}</b><span class="tenue">${M(ing.monto, ing.moneda)} previstos</span></div></div>
+      <div class="botones"><button class="primario ancho" data-accion="repartir" data-id="${esc(ing.id)}" data-fecha="${esc(r.fecha)}">${I('split')} Registrar y repartir</button><button class="ancho" data-accion="pegar-aviso">${I('clipboard-paste')} Pegar aviso</button></div>
+    </section>` : '';
+  }).join('')}
+
   ${tarjetaMeta}
 
-  <div class="tarjeta-titulo" style="margin:4px 2px 10px">${I('vault', { tam: 15 })} Bolsas<button class="fantasma accion" data-accion="panel-valor">Valor de mercado</button></div>
+  <div class="tarjeta-titulo" style="margin:4px 2px 10px">${I('vault', { tam: 15 })} Bolsas <span class="tenue" style="text-transform:none;letter-spacing:0">· toca para ajustar</span></div>
   <div class="carrusel">${p.bolsas.map((b) => {
     const s = saldos[b.id];
     const pct = b.meta > 0 ? Math.min((s.valor / b.meta) * 100, 100) : null;
-    return `<article class="tarjeta">
+    return `<article class="tarjeta pulsable" data-accion="ajustar" data-id="${esc(b.id)}">
       <div class="fila entre">${burbuja(b.icono, b.color)}${s.aportado > 0 && s.rendimiento !== 0 ? `<span class="chip ${s.rendimiento >= 0 ? 'ok' : 'mal'}">${s.rendimientoPct > 0 ? '+' : ''}${s.rendimientoPct}%</span>` : ''}</div>
       <div class="suave" style="margin-top:10px">${esc(b.nombre)}</div>
       <div class="mediano">${M(s.valor, p.moneda, 0)}</div>
@@ -637,6 +787,7 @@ function vistaAvisos() {
           <div class="fila entre"><span class="titulo">${esc(r.titulo)}</span><span class="chip ${r.enDias <= 0 ? 'alerta' : ''}">${fechaRelativa(r.enDias)}</span></div>
           <span class="tenue">${esc(fechaCorta(r.fecha))}${r.detalle ? ' · ' + esc(r.detalle) : ''}</span>
           ${r.pasos?.length ? `<ol class="pasos">${r.pasos.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+          ${r.tipo === 'pago' && r.enDias <= 3 && !estado.hechos[r.clave] ? `<div class="botones" style="margin-top:8px"><button class="chico primario" data-accion="repartir" data-id="${esc(r.clave.split(':pago-')[1])}" data-fecha="${esc(r.fecha)}">${I('split', { tam: 16 })} Registrar y repartir</button></div>` : ''}
         </div>
       </li>`).join('')}</ul>` : `<div class="vacio">${burbuja('bell', p.acento)}<p>Nada en los próximos días.</p></div>`}
   </section>`;
@@ -660,8 +811,9 @@ function vistaAjustes() {
       <div><label class="campo">Moneda secundaria</label><select data-p="monedaSecundaria">${opciones([['', 'Ninguna'], ...monedas.filter(([k]) => k !== p.moneda)], p.monedaSecundaria || '')}</select></div>
     </div>
     ${p.monedaSecundaria ? `<div class="grid2"><div><label class="campo">Tipo de cambio (1 ${esc(p.monedaSecundaria)} = ? ${esc(p.moneda)})</label><input type="number" inputmode="decimal" step="0.001" data-p="tc" value="${p.tc}"></div><div><label class="campo">Fuente</label><div class="tenue" style="padding-top:12px">${esc(p.tcFuente)}<br>${esc(p.tcFecha)}</div></div></div>
-    <div class="botones"><button data-accion="consultar-tc">${I('refresh-cw')} Consultar tipo de cambio</button></div>
-    <p class="tenue">Fuente pública de referencia (open.er-api.com). Para impuestos usa el tipo de cambio oficial de tu país.</p>` : ''}`)}
+    <label class="fila" style="margin-top:12px"><input type="checkbox" data-p="tcAuto" ${p.tcAuto !== false ? 'checked' : ''}> <span>Actualizar automáticamente una vez al día</span></label>
+    <div class="botones"><button data-accion="consultar-tc">${I('refresh-cw')} Consultar ahora</button></div>
+    <p class="tenue">Se actualiza solo al abrir la app (si hay internet) desde una fuente pública de referencia (open.er-api.com). Si lo escribes a mano, se respeta hasta el día siguiente. Para impuestos usa el tipo de cambio oficial (SUNAT/SBS).</p>` : ''}`)}
 
   ${seccion('palette', 'Apariencia', `
     <label class="campo">Tema</label>
@@ -802,6 +954,9 @@ const ACCIONES = {
     render();
   },
   'panel-valor': panelValor,
+  'pegar-aviso': panelPegarAviso,
+  repartir: (el) => panelRepartir(el.dataset.id, null, el.dataset.fecha || C.hoyISO()),
+  ajustar: (el) => panelAjustar(el.dataset.id),
   mes: (el) => {
     mesVista = C.mesDe(C.sumarMeses(`${mesVista}-01`, Number(el.dataset.d)));
     render();
@@ -878,13 +1033,8 @@ const ACCIONES = {
   'consultar-tc': async () => {
     avisar('Consultando…');
     try {
-      const p = P();
-      const j = await conTiempo(`https://open.er-api.com/v6/latest/${encodeURIComponent(p.monedaSecundaria)}`);
-      const tc = j?.rates?.[p.moneda];
-      if (j.result !== 'success' || !tc) throw new Error('respuesta inesperada');
-      Object.assign(p, { tc: Number(tc.toFixed(3)), tcFecha: C.hoyISO(), tcFuente: 'open.er-api.com (referencial)' });
-      await guardar();
-      avisar(`1 ${p.monedaSecundaria} = ${p.tc} ${p.moneda}`);
+      await actualizarTC();
+      avisar(`1 ${P().monedaSecundaria} = ${P().tc} ${P().moneda}`);
       render();
     } catch (err) {
       avisar(`No se pudo consultar (${err.message}). Ingrésalo a mano.`);
@@ -1008,6 +1158,27 @@ async function conTiempo(url, ms = 7000) {
   }
 }
 
+async function actualizarTC() {
+  const p = P();
+  const j = await conTiempo(`https://open.er-api.com/v6/latest/${encodeURIComponent(p.monedaSecundaria)}`);
+  const tc = j?.rates?.[p.moneda];
+  if (j.result !== 'success' || !tc) throw new Error('respuesta inesperada');
+  Object.assign(p, { tc: Number(tc.toFixed(3)), tcFecha: C.hoyISO(), tcFuente: 'open.er-api.com (automático)' });
+  await guardar();
+}
+
+// Una vez al día, en silencio, si hay internet y el usuario no lo desactivó.
+async function tcAutomatico() {
+  const p = estado?.perfil;
+  if (!estado?.configurado || !p?.monedaSecundaria || p.tcAuto === false || p.tcFecha === C.hoyISO() || !navigator.onLine) return;
+  try {
+    await actualizarTC();
+    if (!panelActual) render();
+  } catch {
+    /* sin conexión o la fuente no respondió: se queda el último valor */
+  }
+}
+
 async function notificarPendientes(forzar = false) {
   if (!estado?.configurado || !('Notification' in window) || Notification.permission !== 'granted') return;
   const hoy = C.hoyISO();
@@ -1087,7 +1258,12 @@ async function iniciar() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').then(() => notificarPendientes()).catch(console.error);
   }
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && notificarPendientes());
+  tcAutomatico();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    notificarPendientes();
+    tcAutomatico();
+  });
 }
 
 iniciar();
