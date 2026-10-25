@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es" data-tema="oscuro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05070f">
+  <meta name="description" content="Ingresos, gastos, metas de ahorro, plazos fijos e inversiones. Tus datos se quedan en tu teléfono.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Finanzas">
+  <meta name="format-detection" content="telephone=no">
+  <title>Mis Finanzas</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="cabecera" id="cabecera"></header>
+
+  <main id="contenido" tabindex="-1"></main>
+
+  <nav class="navegacion" id="navegacion" aria-label="Secciones">
+    <button data-accion="ir" data-v="inicio" aria-label="Inicio"><span data-icono="layout-dashboard"></span>Inicio</button>
+    <button data-accion="ir" data-v="movimientos" aria-label="Movimientos"><span data-icono="arrow-left-right"></span>Movimientos</button>
+    <button class="fab" data-accion="nuevo-mov" aria-label="Nuevo movimiento"><span data-icono="plus" data-tam="28"></span></button>
+    <button data-accion="ir" data-v="plazos" aria-label="Plazos fijos"><span data-icono="landmark"></span>Plazos</button>
+    <button data-accion="ir" data-v="ajustes" aria-label="Ajustes"><span data-icono="settings"></span>Ajustes</button>
+  </nav>
+
+  <div id="capa-panel"></div>
+  <input type="file" id="archivo-importar" accept=".json,.csv,application/json,text/csv" hidden>
+  <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+
+  <noscript>Esta app necesita JavaScript.</noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

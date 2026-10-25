@@ -1,0 +1,17 @@
+{
+  "name": "Mis Finanzas",
+  "short_name": "Finanzas",
+  "description": "Ingresos, gastos, ahorros, plazos fijos e inversiones. Datos solo en tu teléfono.",
+  "lang": "es-PE",
+  "start_url": "./#inicio",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05070f",
+  "theme_color": "#05070f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
