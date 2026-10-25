@@ -35,6 +35,21 @@ export function borrarTodo() {
   return transaccion('readwrite', (s) => s.delete(CLAVE));
 }
 
+// La clave de API se guarda aparte del estado para que nunca salga en los respaldos exportados.
+const CLAVE_API = 'clave-api-anthropic';
+
+export function cargarClaveApi() {
+  return transaccion('readonly', (s) => s.get(CLAVE_API));
+}
+
+export function guardarClaveApi(clave) {
+  return transaccion('readwrite', (s) => s.put(clave, CLAVE_API));
+}
+
+export function borrarClaveApi() {
+  return transaccion('readwrite', (s) => s.delete(CLAVE_API));
+}
+
 // Pide al navegador que no borre los datos si falta espacio (importante en iPhone).
 export async function pedirPersistencia() {
   if (navigator.storage?.persist) {

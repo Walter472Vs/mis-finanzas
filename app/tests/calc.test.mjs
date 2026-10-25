@@ -109,6 +109,46 @@ test('ajuste de saldo real: intereses no cuentan como aporte', () => {
   assert.equal(C.movimientoAjuste(100, 90, 'emergencia', 'PEN', '2026-10-31', false).tipo, 'retiro');
 });
 
+test('capturas con IA: esquema, prompt, reglas aprendidas, duplicados y transferencias', () => {
+  const p = perfilEjemplo();
+  const esquema = C.esquemaExtraccion(p);
+  assert.equal(esquema.additionalProperties, false);
+  assert.ok(esquema.properties.movimientos.items.properties.categoria.enum.includes('comida'));
+  assert.ok(esquema.properties.movimientos.items.properties.categoria.enum.includes('sueldo'));
+  const prompt = C.promptExtraccion(p, '2026-11-02', { 'RAPPI PERU': 'comida' });
+  assert.ok(prompt.includes('2026-11-02') && prompt.includes('RAPPI PERU → comida') && prompt.includes('Freelance'));
+  assert.equal(C.claveRegla('Rappi*Perú 12345'), 'RAPPI PERU');
+
+  const existentes = [{ fecha: '2026-10-30', tipo: 'gasto', monto: 45.9, moneda: 'PEN' }];
+  const r = C.normalizarExtraccion(
+    {
+      movimientos: [
+        { fecha: '2026-10-30', descripcion: 'RAPPI*PERU', monto: 45.9, moneda: 'PEN', tipo: 'gasto', categoria: 'compras' },
+        { fecha: '2026-10-31', descripcion: 'Rappi Peru SAC', monto: 30, moneda: 'PEN', tipo: 'gasto', categoria: 'compras' },
+        { fecha: '2026-10-31', descripcion: 'A cuenta ahorros propia', monto: 500, moneda: 'PEN', tipo: 'transferencia_propia', categoria: 'otros' },
+        { fecha: '2026-10-28', descripcion: 'PAGO HABERES', monto: 4812.3, moneda: 'PEN', tipo: 'ingreso', categoria: 'comida' },
+        { fecha: 'ayer', descripcion: 'mal', monto: 10, moneda: 'PEN', tipo: 'gasto', categoria: 'comida' },
+        { fecha: '2026-10-31', descripcion: 'negativo', monto: -10, moneda: 'PEN', tipo: 'gasto', categoria: 'comida' },
+      ],
+      plazosFijos: [
+        { entidad: 'Caja Cusco', monto: 8000, moneda: 'PEN', tasa: 7.1, inicio: '2026-11-01', vencimiento: '2027-10-27' },
+        { entidad: 'Mal', monto: 100, moneda: 'PEN', tasa: 5, inicio: '2027-01-01', vencimiento: '2026-01-01' },
+      ],
+    },
+    p,
+    existentes,
+    { 'RAPPI PERU': 'comida' },
+  );
+  assert.equal(r.movimientos.length, 4);
+  const [dup, rappi, transf, sueldo] = r.movimientos;
+  assert.deepEqual([dup.duplicado, dup.incluir, dup.categoria], [true, false, 'comida']); // regla aprendida
+  assert.deepEqual([rappi.incluir, rappi.categoria], [true, 'comida']);
+  assert.deepEqual([transf.transferencia, transf.incluir], [true, false]);
+  assert.deepEqual([sueldo.tipo, sueldo.categoria], ['ingreso', 'otro']); // "comida" no es categoría de ingreso
+  assert.equal(r.plazos.length, 1);
+  assert.equal(r.plazos[0].entidad, 'Caja Cusco');
+});
+
 test('interés de plazo fijo con TEA y base 360', () => {
   assert.equal(C.redondear(C.interesPF(10000, 6, 360)), 600);
   assert.equal(C.redondear(C.interesPF(10000, 6, 180)), 295.63);

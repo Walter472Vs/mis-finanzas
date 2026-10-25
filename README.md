@@ -41,6 +41,12 @@
   - Al "cobrarlo", el interés se suma a la bolsa como rendimiento.
 - **Días de pago**: te dice cuánto apartar para impuestos, gastos y cada bolsa. El reparto es proporcional a lo que aporta cada ingreso, y te convierte a dólares lo que va a bolsas en dólares.
 - **Calendario (.ics)** con todos tus recordatorios, para que tu teléfono te avise aunque la app esté cerrada.
+- **Leer capturas del banco con IA** (opcional):
+  - Subes capturas de tus movimientos de BCP, Interbank u otro banco, o la constancia de un plazo fijo, y Claude (Anthropic) extrae cada gasto, ingreso y plazo fijo y lo clasifica.
+  - Tú revisas antes de guardar. Las transferencias entre tus cuentas y los posibles duplicados vienen desmarcados.
+  - La app aprende las categorías que eliges para cada comercio.
+  - Usa **tu propia clave de API**, que se guarda solo en tu teléfono y **nunca va en los respaldos**. Las imágenes se envían a Anthropic solo para leerlas. Costo: unos centavos de dólar por tanda de capturas.
+  - Para configurarlo: *Ajustes → Capturas con IA*. Crea la clave en console.anthropic.com y ponle un **límite de gasto mensual** bajo.
 - **Automatizaciones:**
   - **Pegar aviso del banco**: pegas el texto de la notificación, el SMS o el correo de abono, y la app detecta el monto, la moneda, la fecha y a qué ingreso corresponde.
   - **Registrar y repartir**: con un toque se crean el ingreso, el impuesto y los aportes a cada bolsa según tu plan. Si llegó más o menos de lo previsto, el reparto se ajusta solo.
@@ -83,8 +89,9 @@ app/
   js/app.js              interfaz: asistente, vistas, paneles, editores
   js/charts.js           gráficos
   js/icons.js            íconos Lucide
-  js/db.js               IndexedDB
-  tests/calc.test.mjs    18 pruebas
+  js/db.js               IndexedDB (estado y, por separado, la clave de API)
+  js/ia.js               lectura de capturas con Claude (SDK oficial @anthropic-ai/sdk desde jsDelivr)
+  tests/calc.test.mjs    19 pruebas
 ```
 
 ### Pruebas

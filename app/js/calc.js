@@ -22,6 +22,7 @@ export function estadoInicial(perfil = plantillaGenerica()) {
     valoraciones: {}, // { bolsaId: { monto, moneda, fecha } } valor de mercado ingresado a mano
     snapshots: {}, // { 'YYYY-MM': patrimonio en moneda principal }
     hechos: {}, // { 'YYYY-MM-DD:clave': true } recordatorios marcados como hechos
+    reglas: {}, // { 'RAPPI PERU': 'comida' } categorías aprendidas al revisar capturas
   };
 }
 
@@ -253,6 +254,111 @@ export function parsearAviso(texto, perfil) {
     }
   }
   return { monto: elegido.monto, moneda: elegido.moneda, fecha, ingreso };
+}
+
+// ---------- Lectura de capturas con IA ----------
+
+// Clave corta de un comercio o descripción para recordar su categoría ("RAPPI*PERU 123" → "RAPPI PERU").
+export function claveRegla(descripcion) {
+  return String(descripcion || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z ]+/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 1)
+    .slice(0, 2)
+    .join(' ');
+}
+
+// Esquema JSON que debe devolver la IA (structured outputs).
+export function esquemaExtraccion(perfil) {
+  const cats = [...new Set([...perfil.categoriasGasto.map((c) => c.id), ...perfil.categoriasIngreso.map((c) => c.id)])];
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['movimientos', 'plazosFijos'],
+    properties: {
+      movimientos: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['fecha', 'descripcion', 'monto', 'moneda', 'tipo', 'categoria'],
+          properties: {
+            fecha: { type: 'string', description: 'YYYY-MM-DD' },
+            descripcion: { type: 'string' },
+            monto: { type: 'number', description: 'Siempre positivo' },
+            moneda: { type: 'string', enum: ['PEN', 'USD', 'EUR'] },
+            tipo: { type: 'string', enum: ['gasto', 'ingreso', 'transferencia_propia'] },
+            categoria: { type: 'string', enum: cats },
+          },
+        },
+      },
+      plazosFijos: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['entidad', 'monto', 'moneda', 'tasa', 'inicio', 'vencimiento'],
+          properties: {
+            entidad: { type: 'string' },
+            monto: { type: 'number' },
+            moneda: { type: 'string', enum: ['PEN', 'USD', 'EUR'] },
+            tasa: { type: 'number', description: 'TEA en %' },
+            inicio: { type: 'string', description: 'YYYY-MM-DD' },
+            vencimiento: { type: 'string', description: 'YYYY-MM-DD' },
+          },
+        },
+      },
+    },
+  };
+}
+
+export function promptExtraccion(perfil, hoy, reglas = {}) {
+  const lista = (cs) => cs.map((c) => `${c.id} (${c.nombre})`).join(', ');
+  const aprendidas = Object.entries(reglas).slice(0, 40).map(([k, v]) => `${k} → ${v}`).join('; ');
+  return [
+    `Hoy es ${hoy}. Estas son capturas de pantalla de apps bancarias peruanas (BCP, Interbank u otras) de una persona.`,
+    'Extrae cada movimiento visible una sola vez. No inventes movimientos que no se vean.',
+    'Reglas:',
+    '- monto siempre positivo; "tipo" indica la dirección: gasto (cargo, compra, pago, retiro), ingreso (abono, sueldo, depósito recibido) o transferencia_propia (entre cuentas de la misma persona, a su plazo fijo, cambio de moneda propio).',
+    '- Si la fecha no muestra el año, usa el año actual; si eso la deja en el futuro, usa el año anterior. Formato YYYY-MM-DD.',
+    `- categoria para gastos: ${lista(perfil.categoriasGasto)}.`,
+    `- categoria para ingresos: ${lista(perfil.categoriasIngreso)}.`,
+    '- Para transferencia_propia usa la categoría que mejor encaje (por ejemplo "otros").',
+    `- Sus ingresos habituales: ${perfil.ingresos.map((i) => `${i.nombre} (~${i.monto} ${i.moneda}, día ${i.dia})`).join('; ') || 'no indicados'}.`,
+    aprendidas ? `- Categorías que la persona ya eligió antes para estos comercios: ${aprendidas}.` : '',
+    '- Si una captura muestra la constancia o el detalle de un depósito a plazo fijo, agrégalo en plazosFijos (entidad, monto, moneda, TEA %, fecha de inicio y de vencimiento) y NO lo repitas en movimientos.',
+    '- Si no hay nada, devuelve listas vacías.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+const MONEDAS_VALIDAS = /^[A-Z]{3}$/;
+
+// Convierte la respuesta de la IA en propuestas listas para revisar: valida, aplica reglas aprendidas
+// y marca posibles duplicados (misma fecha, monto, moneda y tipo que un movimiento ya registrado).
+export function normalizarExtraccion(json, perfil, existentes = [], reglas = {}) {
+  const fechaOk = (f) => /^\d{4}-\d{2}-\d{2}$/.test(f || '');
+  const movimientos = (json?.movimientos || [])
+    .filter((m) => m && Number(m.monto) > 0 && MONEDAS_VALIDAS.test(m.moneda || '') && fechaOk(m.fecha))
+    .map((m) => {
+      const esTransferencia = m.tipo === 'transferencia_propia';
+      const tipo = m.tipo === 'ingreso' ? 'ingreso' : 'gasto';
+      const cats = tipo === 'ingreso' ? perfil.categoriasIngreso : perfil.categoriasGasto;
+      const aprendida = reglas[claveRegla(m.descripcion)];
+      let cat = aprendida && cats.some((c) => c.id === aprendida) ? aprendida : m.categoria;
+      if (!cats.some((c) => c.id === cat)) cat = (cats.find((c) => /^otro/.test(c.id)) || cats.at(-1))?.id;
+      const monto = redondear(Number(m.monto));
+      const duplicado = existentes.some((e) => e.fecha === m.fecha && e.moneda === m.moneda && e.tipo === tipo && Math.abs(e.monto - monto) < 0.005);
+      return { fecha: m.fecha, descripcion: String(m.descripcion || '').slice(0, 120), monto, moneda: m.moneda, tipo, categoria: cat, transferencia: esTransferencia, duplicado, incluir: !esTransferencia && !duplicado };
+    });
+  const plazos = (json?.plazosFijos || [])
+    .filter((x) => x && x.entidad && Number(x.monto) > 0 && Number(x.tasa) >= 0 && fechaOk(x.inicio) && fechaOk(x.vencimiento) && diasEntre(x.inicio, x.vencimiento) > 0)
+    .map((x) => ({ entidad: String(x.entidad).slice(0, 60), monto: redondear(Number(x.monto)), moneda: x.moneda, tasa: Number(x.tasa), inicio: x.inicio, vencimiento: x.vencimiento, incluir: true }));
+  return { movimientos, plazos };
 }
 
 // ---------- Ajuste de saldo real ----------

@@ -1,6 +1,6 @@
 // Service worker: guarda la app en caché para que funcione sin conexión.
 // Sube VERSION si agregas o renombras archivos de la lista.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `finanzas-${VERSION}`;
 const ARCHIVOS = [
   './',
@@ -13,6 +13,7 @@ const ARCHIVOS = [
   './js/charts.js',
   './js/icons.js',
   './js/plantillas.js',
+  './js/ia.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

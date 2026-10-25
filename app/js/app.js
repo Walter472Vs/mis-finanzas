@@ -11,6 +11,7 @@ let filtroTipo = 'todos';
 let pasoAsistente = 0;
 let plantillaElegida = null;
 let panelActual = null;
+let claveApi = null; // clave de Anthropic del usuario; se guarda aparte y nunca entra en los respaldos
 
 const $ = (sel, raiz = document) => raiz.querySelector(sel);
 const $$ = (sel, raiz = document) => [...raiz.querySelectorAll(sel)];
@@ -358,6 +359,119 @@ function panelIconos(lista, idx, catalogo) {
   );
 }
 
+// Subir capturas del banco, leerlas con IA, revisar y guardar.
+function panelCapturas() {
+  const p = P();
+  if (!claveApi) {
+    return abrirPanel(
+      `${cabeceraPanel('Leer capturas con IA')}
+      <div class="vacio">${burbuja('sparkles', p.acento)}<p>Para leer tus capturas necesitas configurar tu clave de API de Anthropic una sola vez.</p>
+      <button class="primario" data-accion="ir-clave">${I('key-round')} Configurar en Ajustes</button></div>`,
+      {
+        'ir-clave': () => {
+          cerrarPanel();
+          seccionesAbiertas.add('Capturas con IA');
+          ir('ajustes');
+        },
+      },
+    );
+  }
+  let imagenes = [];
+  let propuesta = null;
+  const opcionesCat = (tipo, sel) => opciones(C.categoriasDe(p, tipo).map((c) => [c.id, c.nombre]), sel);
+  const pintarRevision = (panel) => {
+    const { movimientos, plazos } = propuesta;
+    $('#pc-cuerpo', panel).innerHTML = `
+      <p class="suave">Revisa y corrige antes de guardar. Las transferencias entre tus cuentas y los posibles duplicados vienen desmarcados.</p>
+      ${movimientos.length ? `<div class="tarjeta-titulo" style="margin-top:12px">${I('receipt', { tam: 15 })} Movimientos (${movimientos.length})</div>
+      <ul class="lista">${movimientos.map((m, k) => `
+        <li style="flex-wrap:wrap;align-items:flex-start">
+          <input type="checkbox" data-pc-m="${k}" ${m.incluir ? 'checked' : ''} aria-label="Incluir" style="margin-top:4px">
+          <div class="crecer columna">
+            <div class="fila entre"><span class="titulo">${esc(m.descripcion || 'Sin descripción')}</span><b class="${m.tipo === 'gasto' ? 'negativo' : 'positivo'}">${m.tipo === 'gasto' ? '−' : '+'}${M(m.monto, m.moneda)}</b></div>
+            <span class="tenue">${esc(fechaCorta(m.fecha))}${m.duplicado ? ' · <span class="chip alerta">¿Duplicado?</span>' : ''}${m.transferencia ? ' · <span class="chip">Entre tus cuentas</span>' : ''}</span>
+            <div class="grid2" style="margin-top:6px">
+              <select data-pc-tipo="${k}" aria-label="Tipo">${opciones([['gasto', 'Gasto'], ['ingreso', 'Ingreso']], m.tipo)}</select>
+              <select data-pc-cat="${k}" aria-label="Categoría">${opcionesCat(m.tipo, m.categoria)}</select>
+            </div>
+          </div>
+        </li>`).join('')}</ul>` : ''}
+      ${plazos.length ? `<div class="tarjeta-titulo" style="margin-top:12px">${I('landmark', { tam: 15 })} Plazos fijos (${plazos.length})</div>
+      <ul class="lista">${plazos.map((x, k) => `
+        <li style="align-items:flex-start">
+          <input type="checkbox" data-pc-pf="${k}" checked aria-label="Incluir" style="margin-top:4px">
+          <div class="crecer columna"><b>${esc(x.entidad)} · ${x.tasa}% TEA</b><span class="tenue">${M(x.monto, x.moneda)} · ${esc(fechaCorta(x.inicio))} → ${esc(fechaCorta(x.vencimiento))}</span>
+          <select data-pc-bolsa="${k}" style="margin-top:6px" aria-label="Bolsa">${opciones(p.bolsas.map((b) => [b.id, b.nombre]), p.metaPrincipal)}</select></div>
+        </li>`).join('')}</ul>` : ''}
+      ${!movimientos.length && !plazos.length ? '<p class="suave">No encontré movimientos en estas capturas.</p>' : ''}
+      <div class="botones"><button class="primario ancho" data-accion="pc-guardar">${I('check')} Guardar seleccionados</button></div>`;
+    $$('[data-pc-tipo]', panel).forEach((sel) =>
+      sel.addEventListener('change', () => {
+        const k = Number(sel.dataset.pcTipo);
+        movimientos[k].tipo = sel.value;
+        $(`[data-pc-cat="${k}"]`, panel).innerHTML = opcionesCat(sel.value);
+      }),
+    );
+  };
+  abrirPanel(
+    `${cabeceraPanel('Leer capturas con IA')}
+    <div id="pc-cuerpo">
+      <p class="suave">Elige capturas de tus movimientos (BCP, Interbank…) o de la constancia de un plazo fijo. Puedes subir varias a la vez (hasta 10).</p>
+      <label class="opcion" style="cursor:pointer;border:1px dashed var(--borde)">${burbuja('upload', p.acento)}<span class="columna"><b>Elegir capturas</b><span class="tenue">Desde Fotos o Archivos</span></span><input type="file" id="pc-archivos" accept="image/*" multiple hidden></label>
+      <div class="fila" id="pc-vistas" style="flex-wrap:wrap;gap:8px"></div>
+      <div class="botones"><button class="primario ancho" data-accion="pc-leer" disabled>${I('sparkles')} Leer con IA</button></div>
+      <p class="tenue">Las imágenes se envían a Anthropic (Claude) solo para leerlas. Recorta números de cuenta si prefieres. Costo aproximado: unos centavos de dólar por tanda.</p>
+    </div>`,
+    {
+      'pc-leer': async (el) => {
+        el.disabled = true;
+        el.innerHTML = `${I('refresh-cw')} Leyendo… (puede tardar un minuto)`;
+        try {
+          const { leerCapturas } = await import('./ia.js');
+          const { datos } = await leerCapturas(claveApi, imagenes, p, C.hoyISO(), estado.reglas || {});
+          propuesta = C.normalizarExtraccion(datos, p, estado.movimientos, estado.reglas || {});
+          pintarRevision($('.panel'));
+        } catch (err) {
+          avisar(err.message);
+          el.disabled = false;
+          el.innerHTML = `${I('sparkles')} Leer con IA`;
+        }
+      },
+      'pc-guardar': async () => {
+        const panel = $('.panel');
+        estado.reglas ||= {};
+        let n = 0;
+        propuesta.movimientos.forEach((m, k) => {
+          if (!$(`[data-pc-m="${k}"]`, panel).checked) return;
+          const categoria = $(`[data-pc-cat="${k}"]`, panel).value;
+          estado.movimientos.push(C.validarMovimiento({ id: C.nuevoId(), fecha: m.fecha, tipo: m.tipo, categoria, monto: m.monto, moneda: m.moneda, tc: p.tc, nota: m.descripcion }, p));
+          const regla = C.claveRegla(m.descripcion);
+          if (regla) estado.reglas[regla] = categoria;
+          n++;
+        });
+        propuesta.plazos.forEach((x, k) => {
+          if (!$(`[data-pc-pf="${k}"]`, panel).checked) return;
+          estado.plazos.push({ id: C.nuevoId(), entidad: x.entidad, monto: x.monto, moneda: x.moneda, tasa: x.tasa, bolsa: $(`[data-pc-bolsa="${k}"]`, panel).value, inicio: x.inicio, vencimiento: x.vencimiento, estado: 'activo' });
+          n++;
+        });
+        await guardar();
+        cerrarPanel();
+        avisar(`${n} registros guardados`);
+        render();
+      },
+    },
+    (panel) => {
+      $('#pc-archivos', panel).addEventListener('change', async (e) => {
+        const archivos = [...e.target.files].slice(0, 10);
+        const { prepararImagen } = await import('./ia.js');
+        imagenes = await Promise.all(archivos.map(prepararImagen));
+        $('#pc-vistas', panel).innerHTML = imagenes.map((img) => `<img src="${img.vista}" alt="" style="width:64px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--borde)">`).join('');
+        $('[data-accion="pc-leer"]', panel).disabled = !imagenes.length;
+      });
+    },
+  );
+}
+
 // Pegar el texto de una notificación, SMS o correo del banco y convertirlo en un movimiento.
 function panelPegarAviso() {
   const leer = (texto) => {
@@ -626,6 +740,7 @@ function vistaInicio() {
     </div>
   </section>
 
+  <button class="primario ancho" style="margin-bottom:10px;min-height:54px" data-accion="capturas">${I('sparkles')} Leer capturas del banco</button>
   <div class="grid3" style="margin-bottom:14px">
     <button class="accion-rapida" data-accion="pegar-aviso">${I('clipboard-paste')}<span>Pegar aviso</span></button>
     <button class="accion-rapida" data-accion="repartir">${I('split')}<span>Repartir pago</span></button>
@@ -847,6 +962,21 @@ function vistaAjustes() {
     </div>
     <h3 class="suave" style="margin:16px 0 10px">Eventos</h3>${editorEventos()}`)}
 
+  ${seccion('sparkles', 'Capturas con IA', `
+    <p class="suave">Sube capturas de tus movimientos de BCP, Interbank u otro banco, o de la constancia de un plazo fijo, y Claude (IA de Anthropic) los registra y clasifica. Tú revisas antes de guardar, y la app aprende tus categorías.</p>
+    ${claveApi
+      ? `<p class="chip ok">${I('lock', { tam: 13 })} Clave configurada (…${esc(claveApi.slice(-4))})</p>
+         <div class="botones"><button class="peligro" data-accion="borrar-clave">${I('trash-2')} Quitar clave</button></div>`
+      : `<label class="campo" for="clave-api">Tu clave de API de Anthropic</label>
+         <input id="clave-api" type="password" autocomplete="off" placeholder="sk-ant-…">
+         <div class="botones"><button class="primario" data-accion="guardar-clave">${I('key-round')} Guardar clave</button></div>`}
+    <ol class="pasos">
+      <li>Crea una cuenta en console.anthropic.com y agrega saldo (con US$ 5 tienes para meses).</li>
+      <li>En "Limits", pon un <b>límite de gasto mensual bajo</b> (por ejemplo US$ 5).</li>
+      <li>En "API Keys", crea una clave solo para esta app y pégala aquí.</li>
+    </ol>
+    <p class="tenue">La clave se guarda solo en este teléfono, separada de tus datos: <b>no se incluye en los respaldos</b> que exportas. Las capturas se envían a Anthropic solo para leerlas. Si pierdes el teléfono, borra la clave desde la consola de Anthropic.</p>`)}
+
   ${seccion('download', 'Respaldo y datos', `
     <p class="tenue">Tus datos viven solo en este teléfono. Exporta un respaldo cada mes y guárdalo en tu nube.</p>
     <div class="botones">
@@ -955,6 +1085,21 @@ const ACCIONES = {
   },
   'panel-valor': panelValor,
   'pegar-aviso': panelPegarAviso,
+  capturas: panelCapturas,
+  'guardar-clave': async () => {
+    const v = $('#clave-api').value.trim();
+    if (!/^sk-ant-/.test(v)) return avisar('La clave debe empezar con sk-ant-');
+    await DB.guardarClaveApi(v);
+    claveApi = v;
+    avisar('Clave guardada solo en este teléfono');
+    render();
+  },
+  'borrar-clave': async () => {
+    if (!confirm('¿Quitar la clave de API de este teléfono?')) return;
+    await DB.borrarClaveApi();
+    claveApi = null;
+    render();
+  },
   repartir: (el) => panelRepartir(el.dataset.id, null, el.dataset.fecha || C.hoyISO()),
   ajustar: (el) => panelAjustar(el.dataset.id),
   mes: (el) => {
@@ -1208,6 +1353,11 @@ async function iniciar() {
     await guardar();
   }
   DB.pedirPersistencia();
+  try {
+    claveApi = (await DB.cargarClaveApi()) || null;
+  } catch {
+    claveApi = null;
+  }
 
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-accion]');
